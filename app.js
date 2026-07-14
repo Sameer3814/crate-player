@@ -158,12 +158,27 @@ async function enterApp() {
 // Folder selection — user pastes a Drive folder ID (see README for how
 // to grab it from a folder's share link)
 // ---------------------------------------------------------------------
+function extractFolderId(input) {
+  const trimmed = input.trim();
+  // Accept a full Drive URL (any of its common forms) or a bare ID.
+  const match = trimmed.match(/folders\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+  // Bare ID pasted, but strip any stray query string or trailing slash just in case.
+  return trimmed.split("?")[0].replace(/\/+$/, "");
+}
+
 function promptForFolder() {
-  const id = window.prompt(
-    "Paste your Google Drive folder ID (the long string in the folder's share link, after /folders/):"
+  const input = window.prompt(
+    "Paste your Google Drive folder link OR just the folder ID:",
+    folderId || ""
   );
-  if (id) {
-    folderId = id.trim();
+  if (input) {
+    const cleanId = extractFolderId(input);
+    if (!cleanId) {
+      showToast("That didn't look like a valid folder link or ID — try again.");
+      return;
+    }
+    folderId = cleanId;
     localStorage.setItem("crate_folder_id", folderId);
     loadFromDrive();
   }
@@ -187,7 +202,7 @@ async function loadFromDrive() {
       const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (!res.ok) throw new Error(`Drive API error ${res.status}`);
+      if (!res.ok) throw new Error(`Drive API error ${res.status} (folder ID used: "${folderId}")`);
       const data = await res.json();
       files = files.concat(data.files || []);
       pageToken = data.nextPageToken;
