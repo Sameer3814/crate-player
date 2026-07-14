@@ -294,11 +294,22 @@ async function refreshStorageLine() {
 // Bumped on every new tap so a slow/late download for a track the user
 // has since navigated away from doesn't start playing itself.
 let playRequestToken = 0;
+let currentTrackId = null; // the track id currently loaded into the <audio> element
 
 async function playTrackById(id) {
   const track = tracks.find((t) => t.id === id);
   if (!track) return;
+
+  // Tapping the track that's already loaded/loading just toggles play/pause
+  // instead of re-triggering a fresh fetch — this is what was causing the
+  // "operation was aborted" error on a quick double-tap.
+  if (id === currentTrackId) {
+    togglePlay();
+    return;
+  }
+
   const myRequest = ++playRequestToken;
+  currentTrackId = id;
   queueIndex = queue.indexOf(id);
 
   // Show something immediately so the tap always has visible feedback,
@@ -326,6 +337,7 @@ async function playTrackById(id) {
     updateMediaSession(track);
     renderLibrary();
   } catch (err) {
+    if (err.name === "AbortError") return; // expected when a newer tap interrupted this one — not a real error
     console.error(err);
     if (err.name === "NotAllowedError") {
       showToast("iOS blocked autoplay — tap the ▶ button in the player bar once to start it.");
@@ -370,6 +382,7 @@ audio.addEventListener("play", () => { $("#btn-play").textContent = "⏸"; $("#p
 audio.addEventListener("pause", () => { $("#btn-play").textContent = "▶"; $("#player-bar").classList.remove("is-playing"); });
 audio.addEventListener("ended", () => {
   if (repeatMode === "one") { audio.currentTime = 0; audio.play(); return; }
+  currentTrackId = null;
   playNext();
 });
 audio.addEventListener("timeupdate", () => {
