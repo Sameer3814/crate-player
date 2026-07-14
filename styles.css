@@ -158,6 +158,15 @@ input{ font-family: inherit; }
 .np-progress span{ font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex-shrink:0; }
 #np-seek{ flex:1; accent-color: var(--accent); }
 
+/* ---------- Toast ---------- */
+.toast{
+  position: fixed; left: 16px; right: 16px; bottom: 108px; z-index: 50;
+  background: #3A1A12; border: 1px solid #7A2E1B; color: #FCE3D6;
+  padding: 12px 16px; border-radius: var(--radius); font-size: 13px;
+  line-height: 1.4; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.toast.is-info{ background: var(--surface-raised); border-color: var(--line); color: var(--text); }
+
 /* ---------- Mobile ---------- */
 @media (max-width: 720px){
   .app{ flex-direction:column; padding-bottom: 150px; }
