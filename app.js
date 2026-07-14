@@ -24,6 +24,31 @@ let playlists = JSON.parse(localStorage.getItem("crate_playlists") || "{}");
 const audio = $("#audio");
 
 // ---------------------------------------------------------------------
+// Visible on-screen banner — so playback/auth errors show up on the
+// phone itself, not just in a console you can't easily see on iOS.
+// ---------------------------------------------------------------------
+let toastTimer = null;
+function showToast(msg, kind = "error") {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.className = "toast" + (kind === "info" ? " is-info" : "");
+  el.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add("hidden"), 6000);
+}
+
+const AUDIO_ERROR_MESSAGES = {
+  1: "Playback was aborted.",
+  2: "Network error while loading the track.",
+  3: "This file couldn't be decoded — it may not be a supported audio format.",
+  4: "This audio source isn't supported (often means the file didn't actually load — check the track downloaded correctly).",
+};
+audio.addEventListener("error", () => {
+  const code = audio.error?.code;
+  showToast("Playback error: " + (AUDIO_ERROR_MESSAGES[code] || "unknown issue (code " + code + ")"));
+});
+
+// ---------------------------------------------------------------------
 // IndexedDB — stores audio blobs + metadata for offline playback
 // ---------------------------------------------------------------------
 const DB_NAME = "crate-db";
@@ -184,7 +209,7 @@ async function loadFromDrive() {
   } catch (err) {
     console.error(err);
     $("#track-count").textContent = "";
-    alert("Couldn't reach Google Drive: " + err.message);
+    showToast("Couldn't reach Google Drive: " + err.message);
   }
 }
 
@@ -200,13 +225,21 @@ async function hydrateCachedTracks() {
 // ---------------------------------------------------------------------
 // Download / cache a track for offline playback
 // ---------------------------------------------------------------------
-async function downloadTrack(track, rowEl) {
-  const statusEl = rowEl?.querySelector(".track-status");
+function statusElFor(id) {
+  const btn = document.querySelector(`.track-action[data-id="${id}"]`);
+  return btn?.closest(".track-row")?.querySelector(".track-status") || null;
+}
+
+async function downloadTrack(track) {
+  const statusEl = statusElFor(track.id);
   if (statusEl) statusEl.textContent = "0%";
   const res = await fetch(`https://www.googleapis.com/drive/v3/files/${track.id}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!res.ok) throw new Error("download failed");
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`Drive returned ${res.status} while downloading "${track.name}"${bodyText ? " — " + bodyText.slice(0, 120) : ""}`);
+  }
   const total = Number(res.headers.get("Content-Length") || track.size || 0);
   const reader = res.body.getReader();
   let received = 0;
@@ -218,12 +251,13 @@ async function downloadTrack(track, rowEl) {
     received += value.length;
     if (statusEl && total) statusEl.textContent = Math.round((received / total) * 100) + "%";
   }
-  const blob = new Blob(chunks, { type: track.mimeType });
+  const blob = new Blob(chunks, { type: track.mimeType || "audio/mpeg" });
   await idbPut({ id: track.id, name: track.name, mimeType: track.mimeType, blob });
   track.cached = true;
   if (statusEl) statusEl.textContent = "";
   renderLibrary();
   refreshStorageLine();
+  return blob;
 }
 
 async function removeDownload(track) {
@@ -242,33 +276,48 @@ async function refreshStorageLine() {
 // ---------------------------------------------------------------------
 // Playback engine
 // ---------------------------------------------------------------------
+// Bumped on every new tap so a slow/late download for a track the user
+// has since navigated away from doesn't start playing itself.
+let playRequestToken = 0;
+
 async function playTrackById(id) {
   const track = tracks.find((t) => t.id === id);
   if (!track) return;
+  const myRequest = ++playRequestToken;
   queueIndex = queue.indexOf(id);
 
-  let blobUrl;
-  const cached = await idbGet(id);
-  if (cached) {
-    blobUrl = URL.createObjectURL(cached.blob);
-  } else {
-    // stream directly, and cache in background for next time
-    audio.src = `https://www.googleapis.com/drive/v3/files/${id}?alt=media&access_token=${accessToken}`;
-    downloadTrack(track).catch((e) => console.warn("background cache failed", e));
-    startPlayback(track);
-    return;
-  }
-  audio.src = blobUrl;
-  startPlayback(track);
-}
-
-function startPlayback(track) {
-  audio.play().catch((e) => console.warn(e));
+  // Show something immediately so the tap always has visible feedback,
+  // even before the (possibly slow) fetch finishes.
   $("#np-title").textContent = track.name;
-  $("#np-artist").textContent = guessArtist(track.name);
+  $("#np-artist").textContent = "loading…";
   $("#player-bar").classList.remove("hidden");
-  updateMediaSession(track);
   renderLibrary();
+
+  try {
+    let blob;
+    const cached = await idbGet(id);
+    if (cached) {
+      blob = cached.blob;
+    } else {
+      const statusEl = statusElFor(id);
+      if (statusEl) statusEl.textContent = "0%";
+      blob = await downloadTrack(track); // fully authenticated fetch, same path used for offline caching
+    }
+    if (myRequest !== playRequestToken) return; // user tapped something else meanwhile
+
+    audio.src = URL.createObjectURL(blob);
+    await audio.play();
+    $("#np-artist").textContent = guessArtist(track.name);
+    updateMediaSession(track);
+    renderLibrary();
+  } catch (err) {
+    console.error(err);
+    if (err.name === "NotAllowedError") {
+      showToast("iOS blocked autoplay — tap the ▶ button in the player bar once to start it.");
+    } else {
+      showToast(err.message || "Couldn't play that track.");
+    }
+  }
 }
 
 function guessArtist(name) {
@@ -277,7 +326,11 @@ function guessArtist(name) {
 }
 
 function togglePlay() {
-  if (audio.paused) audio.play(); else audio.pause();
+  if (audio.paused) {
+    audio.play().catch((e) => showToast(e.message || "Couldn't resume playback."));
+  } else {
+    audio.pause();
+  }
 }
 function playNext() {
   if (!queue.length) return;
@@ -373,10 +426,11 @@ function renderLibrary() {
       </button>
     `;
     row.querySelector(".track-main").addEventListener("click", () => playTrackById(track.id));
-    row.querySelector(".track-num, .track-disc").addEventListener("click", () => playTrackById(track.id));
+    row.querySelector(".track-num").addEventListener("click", () => playTrackById(track.id));
+    row.querySelector(".track-disc").addEventListener("click", () => playTrackById(track.id));
     row.querySelector(".track-action").addEventListener("click", (e) => {
       e.stopPropagation();
-      if (track.cached) removeDownload(track); else downloadTrack(track, row);
+      if (track.cached) removeDownload(track); else downloadTrack(track).catch((e) => showToast(e.message));
     });
     list.appendChild(row);
   });
