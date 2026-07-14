@@ -1,4 +1,4 @@
-const CACHE_NAME = "crate-shell-v2"; // bump this string on every future update, or the service worker will keep serving old cached files
+const CACHE_NAME = "crate-shell-v3"; // bump this string on every future update, or the service worker will keep serving old cached files
 const SHELL_FILES = [
   "./",
   "./index.html",
