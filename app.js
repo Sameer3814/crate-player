@@ -2,7 +2,7 @@
    Crate — personal music player backed by your Google Drive
    =================================================================== */
 
-const GOOGLE_CLIENT_ID = "PASTE_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = "592935651583-jet4jrpfpmka05ujpdk0qe0ugg038ves.apps.googleusercontent.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
 const $ = (sel) => document.querySelector(sel);
